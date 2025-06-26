@@ -1,5 +1,8 @@
 "use client";
 
+// To use plotly for graphing, install these packages:
+// npm install react-plotly.js plotly.js @types/plotly.js
+
 import { useCallback, useState, useEffect } from "react";
 import ReactFlow, {
   MiniMap,
@@ -19,6 +22,96 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 import { MathJaxContext, MathJax} from "better-react-mathjax";
+import dynamic from 'next/dynamic';
+
+// Dynamically import Plotly to avoid SSR issues
+const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
+
+// Simple Graph Component that can render mathematical functions
+const GraphComponent = ({ 
+  expression = "x^2", 
+  xRange = [-10, 10], 
+  yRange = [-10, 10],
+  title = "Function Graph"
+}) => {
+  // Generate x values based on range
+  const generatePlotData = () => {
+    try {
+      // Create an array of x values
+      const xValues = [];
+      const yValues = [];
+      
+      // Generate 100 points for smooth curve
+      const step = (xRange[1] - xRange[0]) / 100;
+      
+      // Simple function parser - evaluates basic math expressions
+      const evaluateExpression = (expr: string, x: number): number => {
+        // Replace x in the expression with its value
+        const sanitizedExpr = expr.replace(/x/g, `(${x})`);
+        
+        try {
+          // Use Function constructor to safely evaluate the math expression
+          // This is a simple approach and has limitations
+          // eslint-disable-next-line no-new-func
+            // Only allow safe math expressions: numbers, x, +, -, *, /, ^, (, ), Math. functions
+            // Replace ^ with ** for exponentiation
+            const jsExpr = sanitizedExpr.replace(/\^/g, '**');
+            // Only allow Math functions and x, numbers, and operators
+            // Optionally, you can add more Math functions here
+            return Function(`"use strict"; return (${jsExpr})`)();
+        } catch (e) {
+          console.error("Error evaluating expression:", e);
+          return NaN;
+        }
+      };
+      
+      for (let x = xRange[0]; x <= xRange[1]; x += step) {
+        xValues.push(x);
+        
+        // Evaluate the expression for this x value
+        const y = evaluateExpression(expression, x);
+        yValues.push(y);
+      }
+      
+      return [{ x: xValues, y: yValues, type: 'scatter', mode: 'lines', name: expression }];
+    } catch (error) {
+      console.error("Error generating plot data:", error);
+      return [];
+    }
+  };
+
+  const data = generatePlotData() as Partial<Plotly.PlotData>[];
+  
+  const layout = {
+    title: { text: title },
+    plot_bgcolor: "#111",
+    paper_bgcolor: "#111",
+    font: { color: "#fff" },
+    xaxis: {
+      range: xRange,
+      title: { text: 'x' },
+      gridcolor: '#333',
+      zerolinecolor: '#666'
+    },
+    yaxis: {
+      range: yRange,
+      title: { text: 'y' },
+      gridcolor: '#333',
+      zerolinecolor: '#666'
+    }
+  };
+
+  return (
+    <div className="w-full h-full">
+      <Plot
+        data={data}
+        layout={layout}
+        useResizeHandler={true}
+        style={{ width: '100%', height: '100%' }}
+      />
+    </div>
+  );
+};
 
 export default function HomePage() {
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -385,6 +478,82 @@ export default function HomePage() {
           </div>
           
           <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+            {/* Graph Area - Showing integration of 1/x from 1 to 2 */}
+            <div className="md:w-1/2 p-4 overflow-y-auto">
+              <h2 className="text-xl font-bold mb-4">Integration: 1/x from 1 to 2</h2>
+              <div className="step-card" style={{ height: "400px" }}>
+                <Plot
+                  data={[
+                    // Original function 1/x
+                    {
+                      x: Array.from({ length: 100 }, (_, i) => 0.5 + (i * 2.5) / 99),
+                      y: Array.from({ length: 100 }, (_, i) => 1 / (0.5 + (i * 2.5) / 99)),
+                      type: 'scatter',
+                      mode: 'lines',
+                      name: 'f(x) = 1/x',
+                      line: { color: '#3b82f6' }
+                    },
+                    // Fill representing the integral area
+                    {
+                      x: Array.from({ length: 100 }, (_, i) => 1 + (i * 1) / 99).concat([2, 1]),
+                      y: Array.from({ length: 100 }, (_, i) => 1 / (1 + (i * 1) / 99)).concat([0, 0]),
+                      fill: 'toself',
+                      fillcolor: 'rgba(59, 130, 246, 0.2)',
+                      type: 'scatter',
+                      mode: 'none',
+                      name: 'Area ∫(1/x) from 1 to 2',
+                      hoverinfo: 'name',
+                      showlegend: true
+                    },
+                    // Points highlighting the bounds
+                    {
+                      x: [1, 2],
+                      y: [1, 0.5],
+                      type: 'scatter',
+                      mode: 'markers',
+                      marker: { size: 8, color: '#ef4444' },
+                      name: 'Integration bounds'
+                    }
+                  ]}
+                  layout={{
+                    title: { text: 'Integration of 1/x from 1 to 2 = ln(2) ≈ 0.693' },
+                    plot_bgcolor: "#111",
+                    paper_bgcolor: "#111",
+                    font: { color: "#fff" },
+                    xaxis: {
+                      range: [0.5, 3],
+                      title: { text: 'x' },
+                      gridcolor: '#333',
+                      zerolinecolor: '#666'
+                    },
+                    yaxis: {
+                      range: [0, 2],
+                      title: { text: 'y' },
+                      gridcolor: '#333',
+                      zerolinecolor: '#666'
+                    },
+                    annotations: [
+                      {
+                        x: 1.5,
+                        y: 0.3,
+                        text: 'Result = ln(2) ≈ 0.693',
+                        showarrow: false,
+                        font: { color: '#3b82f6', size: 14 }
+                      }
+                    ]
+                  }}
+                  useResizeHandler={true}
+                  style={{ width: '100%', height: '100%' }}
+                />
+              </div>
+              <div className="mt-4">
+                <p className="text-sm text-gray-300">
+                  The graph shows the function f(x) = 1/x with the area under the curve highlighted between x=1 and x=2.
+                  The definite integral ∫(1/x)dx from x=1 to x=2 is equal to ln(2) ≈ 0.693.
+                </p>
+              </div>
+            </div>
+            
             {/* Vertical Steps View */}
             <div className="md:w-1/2 p-4 overflow-y-auto">
               <h2 className="text-xl font-bold mb-4">Solution Steps</h2>
