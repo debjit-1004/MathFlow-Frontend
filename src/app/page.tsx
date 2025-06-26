@@ -29,6 +29,8 @@ export default function HomePage() {
   const [steps, setSteps] = useState<{math: string, explanation: string}[]>([]);
   const [selectedStep, setSelectedStep] = useState<number | null>(null);
   const [substeps, setSubsteps] = useState<{math: string, explanation: string}[]>([]);
+  const [savedQuestions, setSavedQuestions] = useState<{id: string, question: string, timestamp: number, solution: any}[]>([]);
+  const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null);
 
   const handleMouseMove = (e: MouseEvent) => {
     if (e.clientX < 50) {
@@ -45,9 +47,32 @@ export default function HomePage() {
     };
   }, []);
 
+  // Load saved questions from localStorage on component mount
+  useEffect(() => {
+    const savedQuestionsFromStorage = localStorage.getItem('mathflow-saved-questions');
+    if (savedQuestionsFromStorage) {
+      try {
+        const parsedQuestions = JSON.parse(savedQuestionsFromStorage);
+        setSavedQuestions(parsedQuestions);
+      } catch (error) {
+        console.error("Error parsing saved questions", error);
+      }
+    }
+  }, []);
+
+  // Save questions to localStorage whenever they change
+  useEffect(() => {
+    if (savedQuestions.length > 0) {
+      localStorage.setItem('mathflow-saved-questions', JSON.stringify(savedQuestions));
+    }
+  }, [savedQuestions]);
+
   const handleSubmit = async () => {
     try {
-      const res = await axios.post("http://localhost:8000/split-solution", {
+      // Only proceed if there's actual input
+      if (!solutionInput.trim()) return;
+      
+      const res = await axios.post("https://mathflow-backend.onrender.com/split-solution", {
         solution: solutionInput,
       });
 
@@ -55,6 +80,23 @@ export default function HomePage() {
       setSteps(stepsData);
       setSelectedStep(null);
       setSubsteps([]);
+
+      // Save this question to history
+      const newQuestionId = Date.now().toString();
+      const newQuestion = {
+        id: newQuestionId,
+        question: solutionInput,
+        timestamp: Date.now(),
+        solution: stepsData
+      };
+      
+      setSavedQuestions(prevQuestions => {
+        // Remove duplicates and keep only most recent 20 questions
+        const filteredQuestions = prevQuestions
+          .filter(q => q.question !== solutionInput)
+          .slice(0, 19);
+        return [newQuestion, ...filteredQuestions];
+      });
 
       // Create nodes for visualization
       const newNodes = stepsData.map((step: {math: string, explanation: string}, idx: number) => ({
@@ -84,7 +126,17 @@ export default function HomePage() {
       setNodes(newNodes);
       
       // Create edges connecting nodes in sequence
-      const newEdges = stepsData.slice(0, -1).map((_, idx: number) => ({
+      interface Step {
+        math: string;
+        explanation: string;
+      }
+
+      interface Substep {
+        math: string;
+        explanation: string;
+      }
+
+      const newEdges: Edge[] = stepsData.slice(0, -1).map((_: Step, idx: number): Edge => ({
         id: `e-${idx}`,
         source: `${idx}`,
         target: `${idx + 1}`,
@@ -101,13 +153,37 @@ export default function HomePage() {
 
   const handleStepClick = async (index: number) => {
     setSelectedStep(index);
-    
-    try {
-      const res = await axios.post("http://localhost:8000/split-step", {
-        step: steps[index].math,
-      });
 
-      setSubsteps(res.data.substeps);
+    try {
+      const res = await axios.post(
+        "https://mathflow-backend.onrender.com/split-step",
+        {
+          step: steps[index].math,
+        }
+      );
+
+      const processedSubsteps = res.data.substeps.map(
+        (sub: { math: string; explanation: string }) => {
+          // Clean up math part - remove markdown headers and any **asterisks**
+          const cleanMath = sub.math
+            .replace(/## \d+\.\s*Math Step:[\s\*]*/i, "")
+            .replace(/\*\*(.*?)\*\*/g, "$1")
+            .trim();
+          
+          // Clean up explanation - remove markdown headers and any **asterisks**
+          const cleanExplanation = sub.explanation
+            .replace(/## \d+\.\s*Deep Explanation:[\s\*]*/i, "")
+            .replace(/\*\*(.*?)\*\*/g, "$1")
+            .trim();
+            
+          return {
+            math: cleanMath,
+            explanation: cleanExplanation
+          };
+        }
+      );
+
+      setSubsteps(processedSubsteps);
     } catch (error) {
       console.error("Error fetching substeps:", error);
       setSubsteps([]);
@@ -152,7 +228,18 @@ export default function HomePage() {
   };
 
   return (
-    <MathJaxContext>
+    <MathJaxContext config={{
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']],
+          processEscapes: true,
+          processEnvironments: true
+        },
+        options: {
+          enableMenu: false,
+          skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+        }
+      }}>
       <div className="flex w-screen h-screen bg-black text-white">
         {/* Global styles for math containers */}
         <style jsx global>{`
@@ -212,8 +299,69 @@ export default function HomePage() {
             pointerEvents: isSidebarOpen ? "auto" : "none",
           }}
         >
-          <h2 className="font-bold text-lg mb-4">Solution Steps</h2>
-          {renderNodeTree()}
+          <h2 className="font-bold text-lg mb-4">Previous Questions</h2>
+          {savedQuestions.length > 0 ? (
+            <div className="space-y-2">
+              {savedQuestions.map((question) => (
+                <div 
+                  key={question.id} 
+                  className={`p-2 border border-gray-700 rounded hover:bg-gray-900 cursor-pointer ${
+                    selectedQuestionId === question.id ? 'bg-gray-800 border-blue-500' : ''
+                  }`}
+                  onClick={() => {
+                    setSelectedQuestionId(question.id);
+                    setSolutionInput(question.question);
+                    setSteps(question.solution);
+                    setSelectedStep(null);
+                    setSubsteps([]);
+                    
+                    // Create nodes for the saved solution
+                    const newNodes = question.solution.map((step: {math: string, explanation: string}, idx: number) => ({
+                      id: `${idx}`,
+                      type: "default",
+                      data: {
+                        label: (
+                          <div className="node-content">
+                            <div className="text-black text-sm font-mono math-container">
+                              <MathJax dynamic>{step.math}</MathJax>
+                            </div>
+                            <div className="text-black text-xs italic">{step.explanation}</div>
+                          </div>
+                        ),
+                      },
+                      position: { x: 200, y: idx * 100 },
+                      style: {
+                        background: "#f0f0f0",
+                        padding: 10,
+                        borderRadius: 10,
+                        width: 250,
+                        maxWidth: 300,
+                        color: "#000000",
+                      },
+                    }));
+
+                    setNodes(newNodes);
+                    
+                    // Create edges connecting nodes in sequence
+                    const newEdges: Edge[] = question.solution.slice(0, -1).map((_: any, idx: number): Edge => ({
+                      id: `e-${idx}`,
+                      source: `${idx}`,
+                      target: `${idx + 1}`,
+                      animated: true,
+                      style: { stroke: '#888' },
+                    }));
+                    
+                    setEdges(newEdges);
+                  }}
+                >
+                  <div className="text-sm truncate">{question.question}</div>
+                  <div className="text-xs text-gray-400">{new Date(question.timestamp).toLocaleString()}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-400 text-sm">No previous questions</p>
+          )}
         </div>
 
         {/* Main Content */}
@@ -252,11 +400,13 @@ export default function HomePage() {
                     >
                       <div className="text-white text-sm font-mono mb-2">
                         <span className="text-blue-400 mr-2">Step {idx + 1}:</span>
-                        <MathJax dynamic>{step.math}</MathJax>
+                        <div className="math-container">
+                          <MathJax dynamic>{step.math}</MathJax>
+                        </div>
                       </div>
                       {step.explanation && (
                         <div className="text-gray-300 text-sm mt-2">
-                          {step.explanation}
+                          <MathJax dynamic>{step.explanation}</MathJax>
                         </div>
                       )}
                     </div>
@@ -276,11 +426,13 @@ export default function HomePage() {
                         <div key={idx} className="substep-card">
                           <div className="text-white text-sm font-mono mb-2">
                             <span className="text-blue-300 mr-2">{idx + 1}.</span>
-                            <MathJax dynamic>{substep.math}</MathJax>
+                            <div className="math-container">
+                              <MathJax dynamic>{substep.math}</MathJax>
+                            </div>
                           </div>
                           {substep.explanation && (
                             <div className="text-gray-300 text-sm mt-2">
-                              {substep.explanation}
+                              <MathJax dynamic>{substep.explanation}</MathJax>
                             </div>
                           )}
                         </div>
