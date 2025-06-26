@@ -5,7 +5,6 @@
 
 import { useCallback, useState, useEffect } from "react";
 import ReactFlow, {
-  MiniMap,
   Controls,
   Background,
   Node,
@@ -15,114 +14,31 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import axios from "axios";
-import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@/components/ui/accordion";
-import { MathJaxContext, MathJax} from "better-react-mathjax";
+import { MathJaxContext, MathJax } from "better-react-mathjax";
 import dynamic from 'next/dynamic';
 
 // Dynamically import Plotly to avoid SSR issues
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
 
-// Simple Graph Component that can render mathematical functions
-const GraphComponent = ({ 
-  expression = "x^2", 
-  xRange = [-10, 10], 
-  yRange = [-10, 10],
-  title = "Function Graph"
-}) => {
-  // Generate x values based on range
-  const generatePlotData = () => {
-    try {
-      // Create an array of x values
-      const xValues = [];
-      const yValues = [];
-      
-      // Generate 100 points for smooth curve
-      const step = (xRange[1] - xRange[0]) / 100;
-      
-      // Simple function parser - evaluates basic math expressions
-      const evaluateExpression = (expr: string, x: number): number => {
-        // Replace x in the expression with its value
-        const sanitizedExpr = expr.replace(/x/g, `(${x})`);
-        
-        try {
-          // Use Function constructor to safely evaluate the math expression
-          // This is a simple approach and has limitations
-          // eslint-disable-next-line no-new-func
-            // Only allow safe math expressions: numbers, x, +, -, *, /, ^, (, ), Math. functions
-            // Replace ^ with ** for exponentiation
-            const jsExpr = sanitizedExpr.replace(/\^/g, '**');
-            // Only allow Math functions and x, numbers, and operators
-            // Optionally, you can add more Math functions here
-            return Function(`"use strict"; return (${jsExpr})`)();
-        } catch (e) {
-          console.error("Error evaluating expression:", e);
-          return NaN;
-        }
-      };
-      
-      for (let x = xRange[0]; x <= xRange[1]; x += step) {
-        xValues.push(x);
-        
-        // Evaluate the expression for this x value
-        const y = evaluateExpression(expression, x);
-        yValues.push(y);
-      }
-      
-      return [{ x: xValues, y: yValues, type: 'scatter', mode: 'lines', name: expression }];
-    } catch (error) {
-      console.error("Error generating plot data:", error);
-      return [];
-    }
-  };
-
-  const data = generatePlotData() as Partial<Plotly.PlotData>[];
-  
-  const layout = {
-    title: { text: title },
-    plot_bgcolor: "#111",
-    paper_bgcolor: "#111",
-    font: { color: "#fff" },
-    xaxis: {
-      range: xRange,
-      title: { text: 'x' },
-      gridcolor: '#333',
-      zerolinecolor: '#666'
-    },
-    yaxis: {
-      range: yRange,
-      title: { text: 'y' },
-      gridcolor: '#333',
-      zerolinecolor: '#666'
-    }
-  };
-
-  return (
-    <div className="w-full h-full">
-      <Plot
-        data={data}
-        layout={layout}
-        useResizeHandler={true}
-        style={{ width: '100%', height: '100%' }}
-      />
-    </div>
-  );
+// SafeMathJax component to handle errors in MathJax rendering
+const SafeMathJax = ({ children }: { children: React.ReactNode }) => {
+  try {
+    return <MathJax>{children}</MathJax>;
+  } catch (error) {
+    console.error("MathJax rendering error:", error);
+    return <span className="text-red-500">Failed to render math: {String(children)}</span>;
+  }
 };
 
 export default function HomePage() {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
   const [solutionInput, setSolutionInput] = useState("");
-  const [nodeStates, setNodeStates] = useState<Record<string, boolean>>({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [steps, setSteps] = useState<{math: string, explanation: string}[]>([]);
   const [selectedStep, setSelectedStep] = useState<number | null>(null);
   const [substeps, setSubsteps] = useState<{math: string, explanation: string}[]>([]);
-  const [savedQuestions, setSavedQuestions] = useState<{id: string, question: string, timestamp: number, solution: any}[]>([]);
+  const [savedQuestions, setSavedQuestions] = useState<{id: string, question: string, timestamp: number, solution: {math: string, explanation: string}[]}[]>([]);
   const [selectedQuestionId, setSelectedQuestionId] = useState<string | null>(null);
 
   const handleMouseMove = (e: MouseEvent) => {
@@ -199,7 +115,7 @@ export default function HomePage() {
           label: (
             <div className="node-content">
               <div className="text-black text-sm font-mono math-container">
-                <MathJax dynamic>{step.math}</MathJax>
+                <SafeMathJax>{step.math}</SafeMathJax>
               </div>
               <div className="text-black text-xs italic">{step.explanation}</div>
             </div>
@@ -219,17 +135,7 @@ export default function HomePage() {
       setNodes(newNodes);
       
       // Create edges connecting nodes in sequence
-      interface Step {
-        math: string;
-        explanation: string;
-      }
-
-      interface Substep {
-        math: string;
-        explanation: string;
-      }
-
-      const newEdges: Edge[] = stepsData.slice(0, -1).map((_: Step, idx: number): Edge => ({
+      const newEdges: Edge[] = stepsData.slice(0, -1).map((_: {math: string, explanation: string}, idx: number): Edge => ({
         id: `e-${idx}`,
         source: `${idx}`,
         target: `${idx + 1}`,
@@ -238,13 +144,12 @@ export default function HomePage() {
       }));
       
       setEdges(newEdges);
-      setNodeStates({});
     } catch (error) {
       console.error("Error analyzing solution:", error);
     }
   };
 
-  const handleStepClick = async (index: number) => {
+  const handleStepClick = useCallback(async (index: number) => {
     setSelectedStep(index);
 
     try {
@@ -281,7 +186,7 @@ export default function HomePage() {
       console.error("Error fetching substeps:", error);
       setSubsteps([]);
     }
-  };
+  }, [steps]);
 
   const onNodeClick = useCallback(
     async (_event: React.MouseEvent, node: Node) => {
@@ -290,35 +195,8 @@ export default function HomePage() {
         handleStepClick(stepIndex);
       }
     },
-    [steps]
+    [handleStepClick]
   );
-
-  const renderNodeTree = (parentId: string | null = null) => {
-    const childNodes = nodes.filter((node) =>
-      parentId ? node.id.startsWith(`${parentId}-`) : !node.id.includes("-")
-    );
-
-    return (
-      // <Accordion type="single" collapsible>
-      //   {childNodes.map((node) => (
-      //     <AccordionItem key={node.id} value={node.id}>
-      //       <AccordionTrigger className="flex flex-col text-left">
-      //         <div className="text-blue-400 text-sm font-mono">
-      //           <MathJax dynamic inline>{node.data.label?.props?.children[0]?.props?.children}</MathJax>
-      //         </div>
-      //         <div className="text-white text-xs italic">
-      //           {node.data.label?.props?.children[1]?.props?.children}
-      //         </div>
-      //       </AccordionTrigger>
-      //       <AccordionContent>
-      //         {nodeStates[node.id] && renderNodeTree(node.id)}
-      //       </AccordionContent>
-      //     </AccordionItem>
-      //   ))}
-      // </Accordion>
-      5
-    );
-  };
 
   return (
     <MathJaxContext config={{
@@ -331,6 +209,12 @@ export default function HomePage() {
         options: {
           enableMenu: false,
           skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+        },
+        startup: {
+          typeset: false // Don't typeset initially to avoid race conditions
+        },
+        svg: {
+          fontCache: 'global'
         }
       }}>
       <div className="flex w-screen h-screen bg-black text-white">
@@ -436,7 +320,7 @@ export default function HomePage() {
                     setNodes(newNodes);
                     
                     // Create edges connecting nodes in sequence
-                    const newEdges: Edge[] = question.solution.slice(0, -1).map((_: any, idx: number): Edge => ({
+                    const newEdges: Edge[] = question.solution.slice(0, -1).map((_: {math: string, explanation: string}, idx: number): Edge => ({
                       id: `e-${idx}`,
                       source: `${idx}`,
                       target: `${idx + 1}`,
@@ -558,7 +442,7 @@ export default function HomePage() {
             <div className="md:w-1/2 p-4 overflow-y-auto">
               <h2 className="text-xl font-bold mb-4">Solution Steps</h2>
               {steps.length === 0 ? (
-                <p className="text-gray-400">Enter a solution and click "Analyze Solution" to see the steps.</p>
+                <p className="text-gray-400">Enter a solution and click &quot;Analyze Solution&quot; to see the steps.</p>
               ) : (
                 <div className="space-y-4">
                   {steps.map((step, idx) => (
@@ -575,7 +459,7 @@ export default function HomePage() {
                       </div>
                       {step.explanation && (
                         <div className="text-gray-300 text-sm mt-2">
-                          <MathJax dynamic>{step.explanation}</MathJax>
+                          <SafeMathJax>{step.explanation}</SafeMathJax>
                         </div>
                       )}
                     </div>
@@ -596,12 +480,12 @@ export default function HomePage() {
                           <div className="text-white text-sm font-mono mb-2">
                             <span className="text-blue-300 mr-2">{idx + 1}.</span>
                             <div className="math-container">
-                              <MathJax dynamic>{substep.math}</MathJax>
-                            </div>
+                            <SafeMathJax>{substep.math}</SafeMathJax>
+                          </div>
                           </div>
                           {substep.explanation && (
                             <div className="text-gray-300 text-sm mt-2">
-                              <MathJax dynamic>{substep.explanation}</MathJax>
+                              <SafeMathJax>{substep.explanation}</SafeMathJax>
                             </div>
                           )}
                         </div>
